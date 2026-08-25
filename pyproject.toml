@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-snapshot"
+version = "1.0.0"
+description = "Слепок проекта: обход рабочей копии и выгрузка состояния проекта одним документом"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+config = ["PyYAML>=6.0"]
+
+[project.scripts]
+snapshot = "agent.cli:main"
+agent = "agent.cli:main"
+
+[tool.setuptools]
+packages = ["agent", "agent.core", "agent.analyzers"]
+
+[tool.setuptools.package-data]
+agent = ["schema/*.json", "data/*.json"]

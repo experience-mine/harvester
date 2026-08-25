@@ -1,0 +1,117 @@
+# Сборка образа слепка проекта: приёмочные проверки, сборка, дымовой прогон и публикация в GHCR.
+name: docker
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  acceptance:
+    name: приёмочные проверки
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Шаг 1 — ядро, схема и командный интерфейс
+        run: python tests/step1_acceptance.py
+
+      - name: Шаг 2 — история изменений и рабочая копия
+        run: python tests/step2_acceptance.py
+
+  image:
+    name: образ слепка
+    needs: acceptance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # Полная история нужна дымовому прогону: агент собирает коммиты этого же репозитория.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Метаданные образа
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      - name: Сборка образа для проверки
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: project-snapshot:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Дымовой прогон на самом репозитории
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          docker run --rm \
+            -u "$(id -u):$(id -g)" \
+            -v "${PWD}:/project:ro" \
+            -v "${PWD}/out:/out" \
+            project-snapshot:test --code --code-path agent
+          test -f out/scan.json
+          export_file="$(ls out/Version*_export.json | head -n 1)"
+          test -n "${export_file}"
+          echo "выгрузка: ${export_file}"
+          docker run --rm -v "${PWD}/out:/out" --entrypoint python project-snapshot:test \
+            -m agent.cli validate "/out/$(basename "${export_file}")"
+          python - "${export_file}" <<'PY'
+          import json, sys
+          document = json.load(open(sys.argv[1], encoding="utf-8"))
+          for key in ("commits", "people", "files", "relationships", "evidence"):
+              assert document[key], f"массив {key} пуст"
+          print("коммитов:", len(document["commits"]), "| файлов:", len(document["files"]))
+          PY
+
+      - name: Отчёт прогона
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-result
+          path: out/
+          retention-days: 7
+
+      - name: Вход в реестр
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Публикация только для веток и тегов: сборка из forked pull request не имеет прав на реестр.
+      - name: Публикация образа
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

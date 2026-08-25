@@ -1,0 +1,24 @@
+# Сканирование проекта: агент сбора знаний и анализ кода tldr в одном образе.
+#
+# Подготовка: скопировать .env.example в .env и указать PROJECT_DIR — путь к анализируемому проекту.
+# Запуск:     docker compose run --rm scanner --code -- --exclude 'vendor/'
+
+services:
+  scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TLDR_VERSION: ${TLDR_VERSION:-0.4.0}
+    image: project-snapshot:${IMAGE_TAG:-latest}
+    # Файлы результата принадлежат хозяину каталога, а не root внутри контейнера.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      # Анализируемый проект монтируется только на чтение: агент ничего в нём не меняет.
+      - ${PROJECT_DIR:?укажите PROJECT_DIR в .env}:/project:ro
+      - ${OUT_DIR:-./out}:/out
+    environment:
+      SCAN_PROJECT: /project
+      SCAN_OUT: /out
+      # Ключ нужен только для извлечения требований; без него агент собирает остальное.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
