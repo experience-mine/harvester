@@ -17,10 +17,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent.analyzers import register_default_analyzers
+from agent.analyzers.vcs_git import collect_authors, git_available
 from agent.config import Config, ConfigError, load_config
 from agent.core import registry
 from agent.core.exporter import build_document, write_document
-from agent.core.identity import Identity
+from agent.core.identity import Identity, IdentityMap
 from agent.core.ids import evidence_id, project_id, repository_id, slugify
 from agent.core.model import AGENT_VERSION, Evidence, FactCollector
 from agent.core.progress import Progress
@@ -45,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     if arguments.command == "export":
         return _run_export(arguments)
+    if arguments.command == "authors":
+        return _run_authors(arguments)
     if arguments.command == "validate":
         return _run_validate(arguments)
     parser.print_usage(sys.stderr)
@@ -93,6 +96,23 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="ШАБЛОН",
         help="исключить пути из обхода; флаг повторяется, значения дополняют конфигурацию",
+    )
+
+    authors = commands.add_parser("authors", help="перечень авторов истории без сборки выгрузки")
+    authors.add_argument("path", help="путь к каталогу проекта")
+    authors.add_argument("--config", default=None, help="путь к файлу конфигурации вместо agent.yml")
+    authors.add_argument(
+        "--identity",
+        action="append",
+        default=[],
+        metavar="ИМЯ=ПОЧТА,ПОЧТА",
+        help="свести учётные записи в одного человека; флаг повторяется",
+    )
+    authors.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="вид перечня: строки «коммиты имя <почта>» либо JSON с написаниями",
     )
 
     validate = commands.add_parser("validate", help="проверить готовый файл выгрузки")
@@ -177,6 +197,55 @@ def _run_export(arguments: argparse.Namespace) -> int:
         _error(f"файл выгрузки не записан: {error}")
         return EXIT_USAGE
     progress.done(_summary(document, output))
+    return EXIT_OK
+
+
+def _run_authors(arguments: argparse.Namespace) -> int:
+    """Вывести авторов истории: перечень для последующего отбора флагом ``--author``."""
+    root = Path(arguments.path).expanduser()
+    if not root.exists() or not root.is_dir():
+        _error(f"каталог проекта недоступен: {root}")
+        return EXIT_USAGE
+    root = root.resolve()
+    if not (root / ".git").exists():
+        _error(f"каталог не является рабочей копией git: {root}")
+        return EXIT_USAGE
+    if not git_available():
+        _error("исполняемый файл git недоступен")
+        return EXIT_USAGE
+
+    try:
+        config = load_config(root, Path(arguments.config).expanduser() if arguments.config else None)
+    except ConfigError as error:
+        _error(str(error))
+        return EXIT_USAGE
+    try:
+        identities = [*config.identities, *_parse_identity_flags(arguments.identity)]
+    except ValueError as error:
+        _error(f"флаг --identity: {error}")
+        return EXIT_USAGE
+
+    authors = collect_authors(root, IdentityMap(identities) if identities else None)
+    if not authors:
+        _error("история пуста: авторы не найдены")
+        return EXIT_OK
+
+    if arguments.format == "json":
+        payload = [
+            {
+                "name": item.name,
+                "email": item.email,
+                "commits": item.commits,
+                "aliases": [{"name": name, "email": email} for name, email in item.aliases],
+            }
+            for item in authors
+        ]
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return EXIT_OK
+
+    width = max(len(str(item.commits)) for item in authors)
+    for item in authors:
+        print(f"{item.commits:>{width}}  {item.name} <{item.email}>")
     return EXIT_OK
 
 

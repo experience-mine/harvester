@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from agent.analyzers.filesystem import is_utf8, safe
@@ -48,7 +49,7 @@ class GitAnalyzer:
         self._identities = IdentityMap(self._identities) if self._identities else None
         if not context.has_repository:
             return
-        if not _git_available():
+        if not git_available():
             collector.warnings.append(
                 "исполняемый файл git недоступен: история изменений не собрана"
             )
@@ -320,7 +321,7 @@ def _remember_latest(
         latest[person] = (moment, sha, name)
 
 
-def _git_available() -> bool:
+def git_available() -> bool:
     try:
         subprocess.run(["git", "--version"], capture_output=True, check=False)
     except OSError:
@@ -471,3 +472,72 @@ def _merge_changes(
             change["previous_path"] = status["previous_path"]
         changes.append(change)
     return changes, skipped
+
+
+@dataclass(frozen=True)
+class Author:
+    """Участник истории: каноническое имя и адрес, число коммитов и встреченные написания."""
+
+    name: str
+    email: str
+    commits: int
+    aliases: tuple[tuple[str, str], ...] = ()
+
+
+def collect_authors(root: Path, identities: IdentityMap | None = None) -> list[Author]:
+    """Перечень авторов истории без сборки выгрузки: кто и сколько коммитил.
+
+    Читается один проход ``git log`` по локальным веткам и тегам. Карта тождества сводит
+    учётные записи одного человека; без неё отдельной записью идёт каждый адрес. Порядок —
+    по убыванию числа коммитов, при равенстве — по имени: перечень нужен, чтобы выбрать
+    значения для ``--author``, и первыми должны стоять самые заметные участники.
+    """
+    raw = _run(
+        root,
+        ["log", "--branches", "--tags", DATE_FORMAT, f"--pretty=format:{RECORD}%an{FIELD}%ae{FIELD}%ad"],
+    )
+    if not raw:
+        return []
+
+    counts: dict[str, int] = {}
+    canonical: dict[str, tuple[str, str]] = {}
+    latest: dict[str, tuple[str, str]] = {}
+    aliases: dict[str, list[tuple[str, str]]] = {}
+
+    for record in raw.split(RECORD):
+        if not record.strip():
+            continue
+        fields = record.split(FIELD)
+        if len(fields) < 3:
+            continue
+        name, email, moment = (item.strip() for item in fields[:3])
+        identity = identities.resolve(name, email) if identities else None
+        key = _author_key(identity.primary_email if identity else email, name)
+        counts[key] = counts.get(key, 0) + 1
+        alias = (name, email)
+        if alias not in aliases.setdefault(key, []):
+            aliases[key].append(alias)
+        if identity is not None:
+            # Имя из карты тождества каноническое и написанием из истории не перекрывается.
+            canonical[key] = (identity.name, identity.primary_email.lower())
+            continue
+        current = latest.get(key)
+        if current is None or moment > current[0]:
+            latest[key] = (moment, name)
+        canonical[key] = (latest[key][1], email.lower())
+
+    authors = [
+        Author(
+            name=canonical[key][0],
+            email=canonical[key][1],
+            commits=counts[key],
+            aliases=tuple(aliases[key]),
+        )
+        for key in counts
+    ]
+    return sorted(authors, key=lambda item: (-item.commits, item.name.lower(), item.email))
+
+
+def _author_key(email: str, name: str) -> str:
+    """Ключ группировки участника: адрес в нижнем регистре, без адреса — имя."""
+    return email.strip().lower() or f"name/{name.strip().lower()}"
