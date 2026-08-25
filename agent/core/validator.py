@@ -186,10 +186,13 @@ def _check_logical_rules(document: dict[str, Any]) -> list[str]:
         defaults.setdefault(branch["repository_id"], 0)
         if branch["is_default"]:
             defaults[branch["repository_id"]] += 1
+    # При отборе по авторам ветка по умолчанию может указывать на чужой коммит и не попасть
+    # в выгрузку: тогда ветки по умолчанию нет вовсе, и это свойство выборки, а не дефект.
     for repository_id, count in defaults.items():
-        if count != 1:
+        if count > 1 or (not truncated and count != 1):
+            expected = "не более одной ветки" if truncated else "ровно одна ветка"
             errors.append(
-                f"$.branches[repository_id={repository_id}].is_default — ровно одна ветка"
+                f"$.branches[repository_id={repository_id}].is_default — {expected}"
                 f" по умолчанию — {count}"
             )
 
