@@ -79,30 +79,38 @@ ghcr.io/united-software-platform/project-snapshot:sha-85d6f30   точное с�
 
 ## Сценарии запуска
 
-Дальше `SNAPSHOT` — сокращение для образа:
-
-```bash
-SNAPSHOT="ghcr.io/united-software-platform/project-snapshot:latest"
-RUN="docker run --rm -u $(id -u):$(id -g) -v /путь/к/проекту:/project:ro -v $PWD/out:/out"
-```
+Во всех примерах `/путь/к/проекту` — анализируемая рабочая копия, `./out` — каталог результатов.
+Создайте `./out` заранее: docker создаёт недостающий каталог монтирования от имени root, и запуск
+под своим идентификатором пользователя записать в него не сможет.
 
 **Слепок и анализ кода вместе.** Флаг `--code` добавляет разбор кода утилитой `tldr`:
 
 ```bash
-$RUN $SNAPSHOT --code
+mkdir -p out
+docker run --rm \
+  -u "$(id -u):$(id -g)" \
+  -v /путь/к/проекту:/project:ro \
+  -v "$PWD/out:/out" \
+  ghcr.io/united-software-platform/project-snapshot:latest --code
 ```
 
 **Исключить чужой код.** Всё после `--` уходит команде `snapshot export` без изменений:
 
 ```bash
-$RUN $SNAPSHOT -- --exclude 'vendor/' --exclude 'node_modules/'
+docker run --rm \
+  -u "$(id -u):$(id -g)" \
+  -v /путь/к/проекту:/project:ro \
+  -v "$PWD/out:/out" \
+  ghcr.io/united-software-platform/project-snapshot:latest -- \
+    --exclude 'vendor/' --exclude 'node_modules/'
 ```
 
 **Кто есть в истории.** Перечень участников до сборки слепка; каталог результатов не нужен — команда ничего не пишет:
 
 ```bash
-docker run --rm -v /путь/к/проекту:/project:ro \
-  --entrypoint snapshot $SNAPSHOT \
+docker run --rm \
+  -v /путь/к/проекту:/project:ro \
+  --entrypoint snapshot ghcr.io/united-software-platform/project-snapshot:latest \
   authors /project
 ```
 
@@ -112,9 +120,13 @@ docker run --rm -v /путь/к/проекту:/project:ro \
 **История одного человека.** Карта тождества сводит его учётные записи, отбор берёт их все:
 
 ```bash
-$RUN $SNAPSHOT -- \
-  --identity 'Иванов Иван=i.ivanov@example.com,ivanov@personal.example' \
-  --author 'Иванов Иван'
+docker run --rm \
+  -u "$(id -u):$(id -g)" \
+  -v /путь/к/проекту:/project:ro \
+  -v "$PWD/out:/out" \
+  ghcr.io/united-software-platform/project-snapshot:latest -- \
+    --identity 'Иванов Иван=i.ivanov@example.com,ivanov@personal.example' \
+    --author 'Иванов Иван'
 ```
 
 В `--author` указывается имя личности из `--identity`: отбор раскрывается по карте тождества
@@ -125,14 +137,14 @@ $RUN $SNAPSHOT -- \
 
 ```bash
 docker run --rm -v "$PWD/out:/out" \
-  --entrypoint snapshot $SNAPSHOT \
+  --entrypoint snapshot ghcr.io/united-software-platform/project-snapshot:latest \
   validate /out/Version20260825120000_backend_export.json
 ```
 
 **Заглянуть внутрь образа:**
 
 ```bash
-docker run --rm -it --entrypoint bash $SNAPSHOT
+docker run --rm -it --entrypoint bash ghcr.io/united-software-platform/project-snapshot:latest
 ```
 
 ---
@@ -253,3 +265,4 @@ python tests/step2_acceptance.py
 | 1.1.1 | 2026-08-25 | Прогон анализа кода на живом проекте: одна команда вызывалась неверно, граф вызовов усекался | Claude Code | Claude Opus 5 | Таблица состава каталога результатов приведена к фактическому набору файлов: `tldr-complexity.json` убран — команда `complexity` считает одну функцию в одном файле, а сложность по каталогу возвращает `health`; для каждого файла описано его содержание. В таблицу опций добавлена переменная `SCAN_MAX_ITEMS`, снимающая ограничение графа вызовов в двести рёбер |
 | 1.1.2 | 2026-08-25 | Запрос пользователя: неоднозначность отбора по автору в примере «История одного человека» | Claude Code | Claude Opus 5 | В сценарии «История одного человека» отбор переведён с адреса почты на имя личности — `--author 'Иванов Иван'`: значение раскрывается по карте тождества, поэтому имя из `--identity` связывает отбор с картой и не выглядит выбором одного адреса из двух. Под примером добавлено пояснение о раскрытии отбора. В таблице опций агента строка `--author` дополнена указанием на раскрытие значения по карте тождества до всех учётных записей личности |
 | 1.1.3 | 2026-08-25 | PS-002 | Claude Code | Claude Opus 5 | Добавлена команда `authors`: в сценарии запуска включён блок «Кто есть в истории» с вызовом через `--entrypoint snapshot` без монтирования каталога результатов, в раздел опций — таблица флагов команды (`--identity`, `--config`, `--format`). Описан вывод: строка на человека с числом коммитов, именем и адресом в порядке убывания числа коммитов, значения подставляются в `--author` при сборке слепка |
+| 1.1.4 | 2026-08-25 | Запрос пользователя: убрать сокращения `SNAPSHOT` и `RUN` | Claude Code | Claude Opus 5 | Из раздела «Сценарии запуска» удалён блок с переменными `SNAPSHOT` и `RUN`: каждый пример приведён полной командой `docker run` с именем образа, монтированиями проекта и каталога результатов и флагом владельца файлов. Вводный абзац раздела описывает соглашения примеров и требование создать каталог результатов заранее — docker создаёт недостающий каталог монтирования от имени root, и запуск под своим идентификатором пользователя записать в него не может |
