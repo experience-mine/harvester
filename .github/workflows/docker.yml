@@ -35,13 +35,53 @@ jobs:
     needs: acceptance
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # Запись в contents нужна для отметки версии тегом в репозитории.
+      contents: write
       packages: write
     steps:
       # Полная история нужна дымовому прогону: агент собирает коммиты этого же репозитория.
+      # Теги нужны вычислению следующей версии.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
+
+      - name: Версия образа
+        id: version
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, re, subprocess, tomllib
+
+          # Мажор и минор задаёт проект, патч наращивается автоматически от уже выпущенных тегов.
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          major, minor, _ = project.split(".")
+
+          reference = os.environ.get("GITHUB_REF", "")
+          if reference.startswith("refs/tags/v"):
+              # Версия задана тегом вручную — она и берётся, ничего не наращиваем.
+              version = reference[len("refs/tags/v"):]
+              bump = "no"
+          else:
+              tags = subprocess.run(
+                  ["git", "tag", "--list", f"v{major}.{minor}.*"],
+                  capture_output=True, text=True, check=False,
+              ).stdout.split()
+              patches = [
+                  int(match.group(1))
+                  for tag in tags
+                  if (match := re.fullmatch(rf"v{major}\.{minor}\.(\d+)", tag))
+              ]
+              version = f"{major}.{minor}.{max(patches) + 1 if patches else 0}"
+              bump = "yes"
+
+          series = ".".join(version.split(".")[:2])
+          print(f"version={version}")
+          print(f"tag=v{version}")
+          print(f"series={series}")
+          print(f"bump={bump}")
+          PY
+          echo "версия сборки: $(grep '^version=' "$GITHUB_OUTPUT" | tail -n 1)"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -51,10 +91,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
+            type=raw,value=v${{ steps.version.outputs.version }}
+            type=raw,value=${{ steps.version.outputs.series }},enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=pr
-            type=semver,pattern={{version}}
             type=sha,format=short
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
 
       - name: Сборка образа для проверки
         uses: docker/build-push-action@v6
@@ -95,6 +138,17 @@ jobs:
           name: scan-result
           path: out/
           retention-days: 7
+
+      - name: Отметка версии тегом
+        if: github.event_name != 'pull_request' && steps.version.outputs.bump == 'yes'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Образ $TAG"
+          git push origin "$TAG"
 
       - name: Вход в реестр
         if: github.event_name != 'pull_request'
