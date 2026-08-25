@@ -97,10 +97,17 @@ if [ "$CODE" -eq 1 ]; then
       target="$PROJECT/src"
     fi
     echo "[scan] анализ кода: $target"
-    for command in structure calls complexity health; do
+    # complexity в перечень не входит: она считает одну функцию в одном файле,
+    # а сложность по каталогу возвращает health в разделе complexity.
+    for command in structure calls health; do
       file="$OUT/tldr-$command.json"
-      echo "[scan]   tldr $command"
-      if tldr "$command" "$target" --format json > "$file" 2> "$OUT/tldr-$command.err"; then
+      extra=()
+      # Без снятия ограничения граф вызовов усекается до двухсот рёбер и помечается truncated.
+      if [ "$command" = "calls" ]; then
+        extra=(--max-items "${SCAN_MAX_ITEMS:-100000}")
+      fi
+      echo "[scan]   tldr $command${extra[*]+ ${extra[*]}}"
+      if tldr "$command" "$target" "${extra[@]+"${extra[@]}"}" --format json > "$file" 2> "$OUT/tldr-$command.err"; then
         PRODUCED+=("tldr-$command.json")
         rm -f "$OUT/tldr-$command.err"
       else
