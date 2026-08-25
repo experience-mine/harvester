@@ -105,11 +105,17 @@ class GitAnalyzer:
         latest: dict[str, tuple[str, str, str]] = {}
         context.progress.stage("чтение истории: метаданные коммитов")
         authors = _author_flags(context)
-        raw = _run(
-            root,
-            ["log", "--branches", "--tags", *authors, DATE_FORMAT, META_FORMAT],
-            allow_failure=True,
-        )
+        # Отказ git и пустая история — разные исходы: первый попадает в предупреждения,
+        # иначе слепок молча собрался бы без истории и причина осталась бы неизвестной.
+        try:
+            raw = _run(
+                root,
+                ["log", "--branches", "--tags", *authors, DATE_FORMAT, META_FORMAT],
+                allow_failure=False,
+            )
+        except RuntimeError as error:
+            collector.warnings.append(f"история не прочитана: {error}")
+            return
         if not raw:
             return
 
@@ -330,11 +336,26 @@ def git_available() -> bool:
 
 
 def _run(root: Path, arguments: list[str], allow_failure: bool = True) -> str:
-    """Выполнить команду git в каталоге репозитория; при отказе вернуть пустую строку."""
+    """Выполнить команду git в каталоге репозитория.
+
+    При отказе возвращается пустая строка; с ``allow_failure=False`` отказ поднимает
+    ``RuntimeError`` с текстом ошибки git.
+    """
     environment = {"TZ": "UTC", "PATH": _path(), "LC_ALL": "C.UTF-8", "GIT_CONFIG_NOSYSTEM": "1"}
     completed = subprocess.run(
         # quotePath=false: пути в выводе git остаются как есть, без octal-escape.
-        ["git", "-C", str(root), "-c", "core.quotePath=false", *arguments],
+        # safe.directory: рабочая копия принадлежит хозяину хоста, и без исключения git
+        # отказывается читать её как чужую — «detected dubious ownership».
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "core.quotePath=false",
+            "-c",
+            "safe.directory=*",
+            *arguments,
+        ],
         capture_output=True,
         check=False,
         env=environment,
@@ -487,14 +508,18 @@ class Author:
 def collect_authors(root: Path, identities: IdentityMap | None = None) -> list[Author]:
     """Перечень авторов истории без сборки выгрузки: кто и сколько коммитил.
 
-    Читается один проход ``git log`` по локальным веткам и тегам. Карта тождества сводит
+    Читается один проход ``git log`` по локальным веткам и тегам; отказ git поднимает
+    ``RuntimeError``. Карта тождества сводит
     учётные записи одного человека; без неё отдельной записью идёт каждый адрес. Порядок —
     по убыванию числа коммитов, при равенстве — по имени: перечень нужен, чтобы выбрать
     значения для ``--author``, и первыми должны стоять самые заметные участники.
     """
+    # allow_failure=False: пустой перечень авторов и отказ git — разные исходы, и второй
+    # обязан дойти до вызывающего с текстом причины, а не выглядеть пустой историей.
     raw = _run(
         root,
         ["log", "--branches", "--tags", DATE_FORMAT, f"--pretty=format:{RECORD}%an{FIELD}%ae{FIELD}%ad"],
+        allow_failure=False,
     )
     if not raw:
         return []

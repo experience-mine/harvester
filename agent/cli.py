@@ -225,7 +225,11 @@ def _run_authors(arguments: argparse.Namespace) -> int:
         _error(f"флаг --identity: {error}")
         return EXIT_USAGE
 
-    authors = collect_authors(root, IdentityMap(identities) if identities else None)
+    try:
+        authors = collect_authors(root, IdentityMap(identities) if identities else None)
+    except RuntimeError as error:
+        _error(f"история не прочитана: {error}")
+        return EXIT_USAGE
     if not authors:
         _error("история пуста: авторы не найдены")
         return EXIT_OK
