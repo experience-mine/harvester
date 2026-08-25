@@ -1,0 +1,59 @@
+{
+  "comment": "Правила отнесения файла к роли. Первое совпавшее правило выигрывает. Шаблон со слэшем сопоставляется с путём от корня репозитория, без слэша — с именем файла.",
+  "rules": [
+    {
+      "role": "manifest",
+      "patterns": [
+        "pyproject.toml", "requirements.txt", "requirements-*.txt", "Pipfile", "setup.py",
+        "setup.cfg", "poetry.lock", "package.json", "package-lock.json", "yarn.lock",
+        "composer.json", "composer.lock", "go.mod", "go.sum", "Cargo.toml", "Cargo.lock",
+        "pom.xml", "build.gradle", "Gemfile", "Gemfile.lock"
+      ]
+    },
+    {
+      "role": "migration",
+      "patterns": [
+        "migrations/*.sql", "*/migrations/*.sql", "migration/*.sql", "*/migration/*.sql",
+        "db/migrate/*", "alembic/versions/*.py", "*/alembic/versions/*.py",
+        "migrations/versions/*.py", "*/migrations/versions/*.py"
+      ]
+    },
+    {
+      "role": "test",
+      "patterns": [
+        "tests/*", "tests/*/*", "test/*", "test/*/*", "*/tests/*", "*/test/*",
+        "test_*.py", "*_test.py", "*_test.go", "*Test.php", "*.spec.ts", "*.spec.js",
+        "*.test.ts", "*.test.js"
+      ]
+    },
+    {
+      "role": "documentation",
+      "patterns": [
+        "*.md", "*.rst", "*.adoc", "*.asciidoc", "README", "CHANGELOG", "LICENSE", "AUTHORS"
+      ]
+    },
+    {
+      "role": "configuration",
+      "patterns": [
+        "*.yml", "*.yaml", "*.toml", "*.ini", "*.cfg", "*.conf", "*.properties", "*.env",
+        ".env.example", ".gitignore", ".gitattributes", ".editorconfig", "Dockerfile",
+        "Dockerfile.*", "Makefile", "*.mk", "*.json"
+      ]
+    },
+    {
+      "role": "source",
+      "patterns": [
+        "*.py", "*.go", "*.php", "*.js", "*.jsx", "*.ts", "*.tsx", "*.rs", "*.java", "*.kt",
+        "*.rb", "*.c", "*.h", "*.cc", "*.cpp", "*.hpp", "*.cs", "*.scala", "*.swift", "*.sh",
+        "*.sql", "*.vue", "*.css", "*.scss", "*.html"
+      ]
+    },
+    {
+      "role": "asset",
+      "patterns": [
+        "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.ico", "*.webp", "*.pdf",
+        "*.woff", "*.woff2", "*.ttf", "*.eot", "*.mp4", "*.zip", "*.tar", "*.gz"
+      ]
+    }
+  ]
+}

@@ -1,30 +1,23 @@
-
-*.log
-.DS_Store
-.idea/
-
-# Env
+# Окружение
 .env
 
-# Claude per-account config volumes
-.claude-accounts/
-
-# Данные сервисов окружения: тома ArangoDB и выгрузки, создаются make init
-data/
-
-.gh/
-.ssh/
-/tmp
-.claude/settings.local.json
-# Анкеты соискателей: персональные данные, в репозиторий не попадают
-interviews/
-
-# Результаты прогонов сканера
+# Результаты прогонов: слепки, отчёты анализа кода, журналы
 out/
 Version*_export.json
-*.log
 scan.json
+*.log
+.agent-cache/
 
-# Байт-код Python
+# Python
 __pycache__/
 *.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Среды разработки
+.idea/
+.vscode/
+.DS_Store
