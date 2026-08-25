@@ -1,6 +1,8 @@
 # Сканирование проекта: агент сбора знаний и анализ кода tldr в одном образе.
 #
 # Подготовка: скопировать .env.example в .env и указать PROJECT_DIR — путь к анализируемому проекту.
+# Получение:  docker compose pull        (готовый образ из реестра)
+# Сборка:     docker compose build       (локальная сборка вместо готового образа)
 # Запуск:     docker compose run --rm scanner --code -- --exclude 'vendor/'
 
 services:
@@ -10,7 +12,7 @@ services:
       dockerfile: Dockerfile
       args:
         TLDR_VERSION: ${TLDR_VERSION:-0.4.0}
-    image: project-snapshot:${IMAGE_TAG:-latest}
+    image: ${IMAGE:-ghcr.io/united-software-platform/project-snapshot}:${IMAGE_TAG:-latest}
     # Файлы результата принадлежат хозяину каталога, а не root внутри контейнера.
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     volumes:

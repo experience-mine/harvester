@@ -3,12 +3,15 @@
 COMPOSE ?= docker compose
 SCAN_ARGS ?=
 
-.PHONY: help build scan scan-code shell clean
+.PHONY: help pull build scan scan-code shell clean
 
 help: ## Показать перечень целей
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n", $$1, $$2}'
 
-build: ## Собрать образ
+pull: ## Получить готовый образ из реестра
+	$(COMPOSE) pull
+
+build: ## Собрать образ локально вместо готового
 	$(COMPOSE) build
 
 scan: ## Выгрузить знания о проекте: make scan SCAN_ARGS="-- --exclude 'vendor/'"
