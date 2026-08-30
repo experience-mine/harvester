@@ -119,12 +119,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
+          # Проект монтируется под именем репозитория: агент берёт из него slug, и точка
+          # монтирования /project назвала бы каталог слепка «project».
           docker run --rm \
             -u "$(id -u):$(id -g)" \
-            -v "${PWD}:/project:ro" \
+            -v "${PWD}:/harvester:ro" \
             -v "${PWD}/out:/out" \
             -e SCAN_IMAGE=project-snapshot -e SCAN_IMAGE_TAG=test \
-            project-snapshot:test --code --code-path agent
+            project-snapshot:test --project /harvester --code --code-path agent
           # Прогон складывает результаты в каталог {slug}/{метка времени}-{отпечаток фильтров}.
           run_dir="$(find out -mindepth 2 -maxdepth 2 -type d | head -n 1)"
           test -n "${run_dir}"
