@@ -18,9 +18,9 @@ jobs:
     name: приёмочные проверки
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -29,6 +29,9 @@ jobs:
 
       - name: Шаг 2 — история изменений и рабочая копия
         run: python tests/step2_acceptance.py
+
+      - name: Шаг 3 — посекционный формат, манифест и анализ кода
+        run: python tests/step3_acceptance.py
 
   image:
     name: образ слепка
@@ -41,7 +44,7 @@ jobs:
     steps:
       # Полная история нужна дымовому прогону: агент собирает коммиты этого же репозитория.
       # Теги нужны вычислению следующей версии.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -83,11 +86,11 @@ jobs:
           PY
           echo "версия сборки: $(grep '^version=' "$GITHUB_OUTPUT" | tail -n 1)"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Метаданные образа
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -100,11 +103,15 @@ jobs:
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
 
       - name: Сборка образа для проверки
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           load: true
           tags: project-snapshot:test
+          # Тег переставляется на новую сборку, поэтому образ несёт коммит, которым собран:
+          # по нему манифест прогона связывает слепок с породившей его сборкой.
+          build-args: |
+            IMAGE_REVISION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -116,24 +123,57 @@ jobs:
             -u "$(id -u):$(id -g)" \
             -v "${PWD}:/project:ro" \
             -v "${PWD}/out:/out" \
+            -e SCAN_IMAGE=project-snapshot -e SCAN_IMAGE_TAG=test \
             project-snapshot:test --code --code-path agent
-          test -f out/scan.json
-          export_file="$(ls out/Version*_export.json | head -n 1)"
-          test -n "${export_file}"
-          echo "выгрузка: ${export_file}"
+          # Прогон складывает результаты в каталог {slug}/{метка времени}-{отпечаток фильтров}.
+          run_dir="$(find out -mindepth 2 -maxdepth 2 -type d | head -n 1)"
+          test -n "${run_dir}"
+          test -f "${run_dir}/manifest.json"
+          echo "каталог прогона: ${run_dir}"
           docker run --rm -v "${PWD}/out:/out" --entrypoint python project-snapshot:test \
-            -m agent.cli validate "/out/$(basename "${export_file}")"
-          python - "${export_file}" <<'PY'
-          import json, sys
-          document = json.load(open(sys.argv[1], encoding="utf-8"))
-          for key in ("commits", "people", "files", "relationships", "evidence"):
-              assert document[key], f"массив {key} пуст"
-          print("коммитов:", len(document["commits"]), "| файлов:", len(document["files"]))
+            -m agent.cli validate "/out/${run_dir#out/}"
+          python - "${run_dir}" <<'PY'
+          import gzip, json, sys
+          from pathlib import Path
+
+          run = Path(sys.argv[1])
+          manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+
+          # Манифест описывает каталог полностью: лишнего в нём нет, недостающего тоже.
+          listed = {item["name"] for item in manifest["objects"]}
+          actual = {
+              path.relative_to(run).as_posix()
+              for path in run.rglob("*")
+              if path.is_file() and path.name != "manifest.json"
+          }
+          assert listed == actual, f"манифест расходится с каталогом: {listed ^ actual}"
+
+          # Участники живут в скалярной части, остальное — посекционно.
+          core = json.loads(gzip.decompress((run / "core.json.gz").read_bytes()))
+          assert core["people"], "участники пусты"
+
+          records = {item["name"]: item.get("records") for item in manifest["objects"]}
+          for section in ("commits", "files", "relationships", "evidence", "code_units"):
+              name = f"{section}.jsonl.gz"
+              assert records.get(name), f"секция {section} пуста"
+              with gzip.open(run / name, "rt", encoding="utf-8") as handle:
+                  lines = sum(1 for _ in handle)
+              assert lines == records[name], (
+                  f"{section}: манифест обещает {records[name]} записей, в секции {lines}"
+              )
+
+          scope = manifest.get("analysis_scope") or {}
+          assert scope, "охват анализа кода не записан"
+          print(
+              "коммитов:", records["commits.jsonl.gz"],
+              "| файлов:", records["files.jsonl.gz"],
+              "| определений кода:", records["code_units.jsonl.gz"],
+          )
           PY
 
       - name: Отчёт прогона
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: scan-result
           path: out/
@@ -152,7 +192,7 @@ jobs:
 
       - name: Вход в реестр
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -161,11 +201,13 @@ jobs:
       # Публикация только для веток и тегов: сборка из forked pull request не имеет прав на реестр.
       - name: Публикация образа
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            IMAGE_REVISION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
