@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 AGENT_VERSION = "1.0.0"
 
 #: Соответствие типа сущности корневому ключу выгрузки.
@@ -29,6 +29,8 @@ ENTITY_KEYS: dict[str, str] = {
     "database_object": "database_objects",
     "document": "documents",
     "requirement": "requirements",
+    "code_unit": "code_units",
+    "finding": "findings",
 }
 
 #: Корневые ключи выгрузки в порядке их следования в файле.
@@ -50,12 +52,15 @@ ROOT_KEYS: tuple[str, ...] = (
     "database_objects",
     "documents",
     "requirements",
+    "analysis_scope",
+    "code_units",
+    "findings",
     "relationships",
     "evidence",
 )
 
 SOURCE_KINDS: frozenset[str] = frozenset(
-    {"git", "filesystem", "manifest", "migration", "document", "llm"}
+    {"git", "filesystem", "manifest", "migration", "document", "llm", "code_analysis"}
 )
 
 #: Допустимые пары концов для каждого типа связи: тип связи -> {(откуда, куда)}.
@@ -75,10 +80,13 @@ RELATIONSHIP_ENDS: dict[str, frozenset[tuple[str, str]]] = {
             ("repository", "directory"),
             ("directory", "directory"),
             ("directory", "file"),
+            ("code_unit", "code_unit"),
         }
     ),
     "DECLARES": frozenset({("file", "dependency")}),
-    "DEFINES": frozenset({("file", "migration"), ("file", "document")}),
+    "DEFINES": frozenset(
+        {("file", "migration"), ("file", "document"), ("file", "code_unit")}
+    ),
     "AFFECTS": frozenset({("migration", "database_object")}),
     "BELONGS_TO": frozenset({("database_object", "database_object")}),
     "STATES": frozenset({("document", "requirement")}),
@@ -86,6 +94,13 @@ RELATIONSHIP_ENDS: dict[str, frozenset[tuple[str, str]]] = {
     "VERIFIES": frozenset({("requirement", "requirement")}),
     "USES": frozenset({("project", "technology")}),
     "INDICATES": frozenset({("dependency", "technology"), ("file", "technology")}),
+    "CALLS": frozenset({("code_unit", "code_unit")}),
+    "IMPORTS": frozenset({("file", "code_unit"), ("file", "dependency")}),
+    # Направление от предмета к находке: сущность выгрузки должна быть достижима
+    # из проекта по направлениям связей, а находка входящих связей иначе не имеет.
+    "HAS_FINDING": frozenset({("code_unit", "finding"), ("file", "finding")}),
+    "COUPLED_WITH": frozenset({("file", "file")}),
+    "SIMILAR_TO": frozenset({("file", "file")}),
 }
 
 
@@ -170,6 +185,8 @@ class FactCollector:
     """
 
     def __init__(self) -> None:
+        #: Охват анализа кода: что и чем покрыто. Не факт о сущности, а свойство прогона.
+        self.analysis_scope: dict[str, Any] = {}
         self._entities: dict[str, Entity] = {}
         self._relationships: dict[str, Relationship] = {}
         self._evidence: dict[str, Evidence] = {}

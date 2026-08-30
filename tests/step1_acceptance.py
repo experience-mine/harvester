@@ -192,9 +192,9 @@ def run_empty_project(workspace: Path) -> dict:
     document = json.loads(output.read_text(encoding="utf-8"))
     schema = load_schema()
     expected_keys = set(schema["required"])
-    check(set(document) == expected_keys, "в выгрузке все 18 корневых ключей", str(len(document)))
-    check(document["schema_version"] == "1.0", "версия схемы равна 1.0", document["schema_version"])
-    scalar_keys = {"schema_version", "generated_at", "filters", "project", "evidence"}
+    check(set(document) == expected_keys, "в выгрузке все корневые ключи схемы", str(len(document)))
+    check(document["schema_version"] == "2.0", "версия схемы равна 2.0", document["schema_version"])
+    scalar_keys = {"schema_version", "generated_at", "filters", "project", "analysis_scope", "evidence"}
     check(
         all(document[key] == [] for key in expected_keys - scalar_keys),
         "массивы сущностей пусты на пустом каталоге",
@@ -227,7 +227,7 @@ def run_invalid_files(workspace: Path, document: dict) -> None:
     cases["лишний корневой ключ даёт код 2"] = extra_key
 
     wrong_version = copy.deepcopy(document)
-    wrong_version["schema_version"] = "2.0"
+    wrong_version["schema_version"] = "1.0"
     cases["чужая версия схемы даёт код 2"] = wrong_version
 
     for index, (title, broken) in enumerate(cases.items()):
@@ -365,24 +365,37 @@ def run_versioned_name(workspace: Path) -> None:
     target.mkdir()
     check(main(["export", str(source), "-o", str(target), "--versioned", "--quiet"]) == EXIT_OK,
           "export с --versioned завершается кодом 0")
-    produced = sorted(target.glob("Version*_export.json"))
-    check(len(produced) == 1, "версионированный файл создан", str([item.name for item in produced]))
+    produced = sorted(target.glob("*/*/core.json.gz"))
+    check(len(produced) == 1, "выгрузка создана в каталоге прогона", str([str(item) for item in produced]))
+    if not produced:
+        return
+    run_directory = produced[0].parent
     check(
-        bool(re.fullmatch(r"Version\d{14}_versioned-source_export\.json", produced[0].name)),
-        "имя соответствует шаблону Version{ГГГГММДДЧЧММСС}_{проект}_export.json",
-        produced[0].name,
+        run_directory.parent.name == "versioned-source",
+        "каталог прогона лежит в каталоге проекта",
+        run_directory.parent.name,
     )
-    check(main(["validate", str(produced[0])]) == EXIT_OK, "версионированная выгрузка валидна")
+    check(
+        bool(re.fullmatch(r"\d{14}-[0-9a-f]{8}", run_directory.name)),
+        "имя каталога прогона — метка времени и отпечаток фильтров",
+        run_directory.name,
+    )
+    # Валидация посекционной выгрузки описана отдельно: проверяется задачами группы 8.
 
     # Прежние версии лежат внутри проекта и не должны попадать в следующую выгрузку.
     main(["export", str(source), "-o", str(source), "--versioned", "--quiet"])
     main(["export", str(source), "-o", str(source), "--versioned", "--quiet"])
-    inside = sorted(source.glob("Version*_export.json"))
-    latest = json.loads(inside[-1].read_text(encoding="utf-8"))
+    import gzip
+
+    inside = sorted(source.glob("*/*/core.json.gz"))
+    with gzip.open(inside[-1], "rt", encoding="utf-8") as handle:
+        latest = json.load(handle)
+    with gzip.open(inside[-1].parent / "files.jsonl.gz", "rt", encoding="utf-8") as handle:
+        collected = [json.loads(line) for line in handle.read().splitlines() if line]
     check(
-        all(not item["path"].startswith("Version") for item in latest["files"]),
+        all("core.json" not in item["path"] for item in collected),
         "прежние версии выгрузки не попадают в новую",
-        str([item["path"] for item in latest["files"]]),
+        str([item["path"] for item in collected]),
     )
 
 

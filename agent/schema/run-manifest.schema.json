@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run-manifest.schema.json",
+  "title": "Run Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "started_at",
+    "finished_at",
+    "agent_version",
+    "filters",
+    "objects",
+    "sections"
+  ],
+  "properties": {
+    "started_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "finished_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "agent_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authors",
+        "exclude"
+      ],
+      "properties": {
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/object"
+      }
+    },
+    "sections": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "analysis_scope": {
+      "type": "object"
+    },
+    "provenance": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "size_bytes",
+        "sha256",
+        "content_type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "records": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

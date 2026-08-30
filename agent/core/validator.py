@@ -6,12 +6,16 @@
 
 from __future__ import annotations
 
+import gzip
+import hashlib
+
 import json
 from pathlib import Path
 from typing import Any
 
 from agent.core import jsonschema
 from agent.core.ids import entity_type_of
+from agent.core.exporter import CORE_NAME, SECTION_KEYS
 from agent.core.model import ENTITY_KEYS, RELATIONSHIP_ENDS
 
 DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "project-knowledge.schema.json"
@@ -307,3 +311,117 @@ def _check_reachability(document: dict[str, Any]) -> list[str]:
                 f" — недостижима"
             )
     return errors
+
+
+#: Имя схемы манифеста прогона рядом со схемой выгрузки.
+MANIFEST_SCHEMA_NAME = "run-manifest.schema.json"
+
+
+def load_manifest_schema(path: Path | None = None) -> dict[str, Any]:
+    """Схема манифеста прогона; по умолчанию — поставляемая с агентом."""
+    target = path or Path(__file__).resolve().parent.parent / "schema" / MANIFEST_SCHEMA_NAME
+    return json.loads(target.read_text(encoding="utf-8"))
+
+
+def validate_manifest(directory: Path, objects_base: Path | None = None) -> list[str]:
+    """Проверить манифест прогона: соответствие схеме и сходимость с содержимым каталога."""
+    path = directory / "manifest.json"
+    if not path.is_file():
+        return ["$.manifest.json — отсутствует в каталоге прогона"]
+
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        return [f"$.manifest.json — не разбирается: {error}"]
+
+    errors = jsonschema.validate(manifest, load_manifest_schema())
+    if errors:
+        return errors
+
+    base = objects_base or directory
+    for item in manifest["objects"]:
+        target = base / item["name"]
+        if not target.is_file():
+            errors.append(f"$.objects[{item['name']}] — объект отсутствует в каталоге прогона")
+            continue
+        if target.stat().st_size != item["size_bytes"]:
+            errors.append(f"$.objects[{item['name']}].size_bytes — не совпадает с объектом")
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        if digest != item["sha256"]:
+            errors.append(f"$.objects[{item['name']}].sha256 — не совпадает с объектом")
+    return errors
+
+
+def core_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Схема скалярной части: те же поля, но без секций, вынесенных в отдельные объекты."""
+    return {
+        **{key: value for key, value in schema.items() if key not in ("required", "properties")},
+        "required": [key for key in schema["required"] if key not in SECTION_KEYS],
+        "properties": {
+            key: value for key, value in schema["properties"].items() if key not in SECTION_KEYS
+        },
+    }
+
+
+def section_schema(schema: dict[str, Any], section: str) -> dict[str, Any]:
+    """Схема одной записи секции: описание элемента массива из общей схемы."""
+    described = schema["properties"].get(section) or {}
+    return {"$defs": schema["$defs"], **(described.get("items") or {})}
+
+
+def read_run(directory: Path) -> tuple[dict[str, Any], list[str]]:
+    """Собрать выгрузку из каталога прогона: скалярная часть плюс записи каждой секции."""
+    errors: list[str] = []
+    core_path = directory / CORE_NAME
+    if not core_path.is_file():
+        return {}, [f"$.{CORE_NAME} — отсутствует в каталоге прогона"]
+
+    with gzip.open(core_path, "rt", encoding="utf-8") as handle:
+        document: dict[str, Any] = json.load(handle)
+
+    for section in SECTION_KEYS:
+        path = directory / f"{section}.jsonl.gz"
+        if not path.is_file():
+            errors.append(f"$.{section} — объект секции отсутствует")
+            document[section] = []
+            continue
+        records = []
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            for number, line in enumerate(handle, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError as error:
+                    errors.append(f"$.{section}[строка {number}] — не разбирается: {error}")
+        document[section] = records
+    return document, errors
+
+
+def validate_run(directory: Path, schema: dict[str, Any]) -> list[str]:
+    """Проверить прогон посекционно, затем целостность ссылок между секциями.
+
+    Схема описывает запись секции, а не весь документ: секции читаются независимо,
+    поэтому проверка одной не требует загрузки остальных. Целостность ссылок проверяется
+    после чтения — она связывает секции между собой и в отдельной секции не выражается.
+    """
+    document, errors = read_run(directory)
+    if not document:
+        return errors
+
+    errors.extend(jsonschema.validate(core_document_of(document), core_schema(schema)))
+    for section in SECTION_KEYS:
+        described = section_schema(schema, section)
+        for index, record in enumerate(document.get(section) or []):
+            for error in jsonschema.validate(record, described):
+                errors.append(f"$.{section}[{index}] — {error}")
+
+    if errors:
+        return errors
+    return validate_document(document, schema)
+
+
+def core_document_of(document: dict[str, Any]) -> dict[str, Any]:
+    """Скалярная часть собранного прогона: то, что лежит в отдельном объекте."""
+    return {key: value for key, value in document.items() if key not in SECTION_KEYS}

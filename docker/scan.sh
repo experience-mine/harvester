@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Обвязка образа: выгрузка знаний агентом и анализ кода утилитой tldr за один прогон.
-#
+#.
 # Использование:
 #   scan [опции обвязки] [-- опции agent export]
 #
@@ -76,16 +76,6 @@ PRODUCED=()
 echo "[scan] проект: $PROJECT | результаты: $OUT"
 echo "[scan] агент: $AGENT_VERSION | tldr: $TLDR_VERSION | $GIT_VERSION"
 
-if [ "$EXPORT" -eq 1 ]; then
-  echo "[scan] выгрузка знаний о проекте"
-  before="$(ls -1 "$OUT" 2>/dev/null || true)"
-  python -m agent.cli export "$PROJECT" --versioned --output "$OUT" "${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"}"
-  after="$(ls -1 "$OUT" 2>/dev/null || true)"
-  while IFS= read -r name; do
-    [ -n "$name" ] && PRODUCED+=("$name")
-  done < <(comm -13 <(echo "$before" | sort) <(echo "$after" | sort))
-fi
-
 if [ "$CODE" -eq 1 ]; then
   if ! command -v tldr > /dev/null 2>&1; then
     echo "[scan] warning: tldr недоступен, анализ кода пропущен" >&2
@@ -97,46 +87,66 @@ if [ "$CODE" -eq 1 ]; then
       target="$PROJECT/src"
     fi
     echo "[scan] анализ кода: $target"
+    # Документы анализа складываются в промежуточный каталог: имя каталога прогона
+    # вычисляет агент, он же переносит исходники и диагностику к выгрузке.
+    STAGE="$OUT/.code-analysis"
+    mkdir -p "$STAGE"
+    CODE_STATUS=()
     # complexity в перечень не входит: она считает одну функцию в одном файле,
     # а сложность по каталогу возвращает health в разделе complexity.
     for command in structure calls health; do
-      file="$OUT/tldr-$command.json"
+      file="$STAGE/tldr-$command.json"
       extra=()
       # Без снятия ограничения граф вызовов усекается до двухсот рёбер и помечается truncated.
       if [ "$command" = "calls" ]; then
         extra=(--max-items "${SCAN_MAX_ITEMS:-100000}")
       fi
       echo "[scan]   tldr $command${extra[*]+ ${extra[*]}}"
-      if tldr "$command" "$target" "${extra[@]+"${extra[@]}"}" --format json > "$file" 2> "$OUT/tldr-$command.err"; then
+      if tldr "$command" "$target" "${extra[@]+"${extra[@]}"}" --format json > "$file" 2> "$STAGE/tldr-$command.err"; then
         PRODUCED+=("tldr-$command.json")
-        rm -f "$OUT/tldr-$command.err"
+        CODE_STATUS+=("\"$command\": true")
+        rm -f "$STAGE/tldr-$command.err"
       else
-        echo "[scan]   warning: tldr $command завершился с ошибкой, см. tldr-$command.err" >&2
+        # Диагностика остаётся в промежуточном каталоге и переносится к выгрузке вместе
+        # с документами: несписанных файлов в каталоге результатов не остаётся.
+        echo "[scan]   warning: tldr $command завершился с ошибкой, см. код-анализ прогона" >&2
+        PRODUCED+=("tldr-$command.err")
+        CODE_STATUS+=("\"$command\": false")
         rm -f "$file"
       fi
     done
   fi
 fi
 
-# Манифест прогона: чем и когда собраны файлы рядом с ним.
+# Сведения, известные обвязке: версии внешних утилит, координата образа и статусы
+# команд анализа. Состав результатов описывает агент — он их и создаёт.
+METADATA="$OUT/.run-metadata.json"
 {
   printf '{\n'
-  printf '  "started_at": "%s",\n' "$STARTED"
-  printf '  "finished_at": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf '  "project": "%s",\n' "$PROJECT"
-  printf '  "agent_version": "%s",\n' "$AGENT_VERSION"
   printf '  "tldr_version": "%s",\n' "$TLDR_VERSION"
   printf '  "git_version": "%s",\n' "$GIT_VERSION"
+  printf '  "image": "%s",\n' "${SCAN_IMAGE:-неизвестен}"
+  printf '  "image_tag": "%s",\n' "${SCAN_IMAGE_TAG:-неизвестен}"
+  printf '  "code_path": "%s",\n' "${CODE_PATH:-}"
   printf '  "agent_arguments": "%s",\n' "${AGENT_ARGS[*]+${AGENT_ARGS[*]}}"
-  printf '  "produced": ['
+  printf '  "code_analysis": {'
   first=1
-  for name in ${PRODUCED[@]+"${PRODUCED[@]}"}; do
+  for entry in ${CODE_STATUS[@]+"${CODE_STATUS[@]}"}; do
     [ "$first" -eq 1 ] || printf ', '
-    printf '"%s"' "$name"
+    printf '%s' "$entry"
     first=0
   done
-  printf ']\n}\n'
-} > "$OUT/scan.json"
+  printf '}\n}\n'
+} > "$METADATA"
 
-echo "[scan] готово: $OUT/scan.json"
+if [ "$EXPORT" -eq 1 ]; then
+  echo "[scan] выгрузка знаний о проекте"
+  python -m agent.cli export "$PROJECT" --versioned --output "$OUT" \
+    --run-metadata "$METADATA" \
+    ${STAGE:+--code-analysis "$STAGE"} "${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"}"
+  rm -rf "${STAGE:-}"
+fi
+rm -f "$METADATA"
+
+echo "[scan] готово"
 for name in ${PRODUCED[@]+"${PRODUCED[@]}"}; do echo "[scan]   $name"; done

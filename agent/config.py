@@ -41,6 +41,7 @@ class Config:
     requirements_model: str = DEFAULT_MODEL
     requirements_max_document_chars: int = DEFAULT_MAX_DOCUMENT_CHARS
     source_path: Path | None = None
+    code_analysis_path: Path | None = None
 
 
 def load_config(root: Path, explicit_path: Path | None = None) -> Config:

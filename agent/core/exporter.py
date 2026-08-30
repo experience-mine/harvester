@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
-from agent.core.model import ENTITY_KEYS, SCHEMA_VERSION, Entity, FactCollector
+from agent.core.model import ENTITY_KEYS, ROOT_KEYS, SCHEMA_VERSION, Entity, FactCollector
 
 
 def build_document(
@@ -35,6 +36,7 @@ def build_document(
             "exclude": sorted((filters or {}).get("exclude", [])),
         },
         "project": projects[0].to_json(),
+        "analysis_scope": dict(collector.analysis_scope),
     }
     for entity_type, key in ENTITY_KEYS.items():
         if key == "project":
@@ -68,3 +70,56 @@ def write_document(document: dict[str, Any], output: str) -> None:
 
 def _sorted_json(entities: list[Entity]) -> list[dict[str, Any]]:
     return sorted((entity.to_json() for entity in entities), key=lambda item: item["id"])
+
+
+#: Секции, растущие вместе с проектом: каждая пишется отдельным объектом.
+SECTION_KEYS: tuple[str, ...] = (
+    "commits",
+    "directories",
+    "files",
+    "technologies",
+    "dependencies",
+    "migrations",
+    "database_objects",
+    "documents",
+    "requirements",
+    "code_units",
+    "findings",
+    "relationships",
+    "evidence",
+)
+
+#: Имя объекта со скалярной частью выгрузки и малыми секциями.
+CORE_NAME = "core.json.gz"
+
+
+def core_document(document: dict[str, Any]) -> dict[str, Any]:
+    """Скалярная часть выгрузки и малые секции: всё, что не растёт с размером проекта."""
+    return {key: value for key, value in document.items() if key not in SECTION_KEYS}
+
+
+def write_sections(document: dict[str, Any], directory: str | Path) -> list[Path]:
+    """Записать выгрузку посекционно: скалярная часть одним объектом, секции — по объекту.
+
+    Секция пишется построчно — одна запись в строке — и сжимается отдельно от остальных:
+    внутри общего объекта секция не адресуема, а общий архив лишил бы смысла разделение.
+    Пустая секция записывается объектом с нулём строк: её отсутствие не отличалось бы
+    от невыполненного сбора.
+    """
+    target = Path(directory)
+    target.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    core = target / CORE_NAME
+    with gzip.open(core, "wt", encoding="utf-8") as handle:
+        handle.write(json.dumps(core_document(document), ensure_ascii=False, indent=2) + "\n")
+    written.append(core)
+
+    for key in SECTION_KEYS:
+        records = document.get(key) or []
+        path = target / f"{key}.jsonl.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+        written.append(path)
+    return written
