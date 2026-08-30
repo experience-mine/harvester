@@ -127,6 +127,11 @@ METADATA="$OUT/.run-metadata.json"
   printf '  "git_version": "%s",\n' "$GIT_VERSION"
   printf '  "image": "%s",\n' "${SCAN_IMAGE:-неизвестен}"
   printf '  "image_tag": "%s",\n' "${SCAN_IMAGE_TAG:-неизвестен}"
+  # Тег переставляется на новую сборку, поэтому прогон отдельно фиксирует неизменяемые
+  # идентификаторы: ревизию, зашитую в образ при сборке, и digest, известный только
+  # снаружи контейнера и потому приходящий переменной от вызывающей стороны.
+  printf '  "image_revision": "%s",\n' "${SCAN_IMAGE_REVISION:-неизвестна}"
+  printf '  "image_digest": "%s",\n' "${SCAN_IMAGE_DIGEST:-неизвестен}"
   printf '  "code_path": "%s",\n' "${CODE_PATH:-}"
   printf '  "agent_arguments": "%s",\n' "${AGENT_ARGS[*]+${AGENT_ARGS[*]}}"
   printf '  "code_analysis": {'

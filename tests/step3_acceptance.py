@@ -106,6 +106,23 @@ def run_without_documents(workspace: Path) -> None:
     check(document.get("findings") == [], "секция находок пуста")
     check(document.get("analysis_scope") == {}, "охват анализа пуст, но присутствует")
 
+    # Неуспех всех разделов отличается от прогона без анализа: каталог анализа создан,
+    # но ни один документ не получен. Охват здесь обязан присутствовать — по нему
+    # потребитель отличает файл вне области анализа от файла без определений.
+    failed = workspace / "провалившийся-анализ"
+    failed.mkdir()
+    output_failed = workspace / "export-failed.json"
+    code = main(
+        ["export", str(project), "-o", str(output_failed), "--code-analysis", str(failed), "--quiet"]
+    )
+    check(code == EXIT_OK, "прогон с неуспешным анализом завершается кодом 0", f"код {code}")
+    if code != EXIT_OK:
+        return
+    scope = json.loads(output_failed.read_text(encoding="utf-8")).get("analysis_scope") or {}
+    check(bool(scope), "охват присутствует при неуспехе всех разделов анализа", str(scope))
+    check(scope.get("documents") == [], "охват фиксирует отсутствие документов анализа")
+    check(scope.get("sections") == {}, "охват фиксирует, что ни один раздел не выполнен")
+
 
 def write_structure(directory: Path, root: Path) -> int:
     """Документ анализа кода известного содержания; возвращает число определений в нём."""
@@ -619,6 +636,8 @@ def run_manifest(workspace: Path) -> None:
                 "tldr_version": "tldr 0.4.0",
                 "image": "ghcr.io/experience-mine/harvester",
                 "image_tag": "v1.1.0",
+                "image_revision": "e3f1c2d",
+                "image_digest": "sha256:0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c",
                 "code_analysis": {"structure": True, "calls": True, "health": False},
             },
             ensure_ascii=False,
@@ -701,6 +720,18 @@ def run_manifest(workspace: Path) -> None:
         provenance.get("image_tag") == "v1.1.0",
         "провенанс несёт координату и версию образа",
         str(provenance.get("image_tag")),
+    )
+    # Версия агента и тег образа две сборки не различают: первая задана константой
+    # в коде, второй переставляется на новую сборку. Различает неизменяемый идентификатор.
+    check(
+        provenance.get("image_revision") == "e3f1c2d",
+        "провенанс несёт неизменяемую ревизию сборки образа",
+        str(provenance.get("image_revision")),
+    )
+    check(
+        str(provenance.get("image_digest", "")).startswith("sha256:"),
+        "провенанс несёт digest образа",
+        str(provenance.get("image_digest")),
     )
     check(
         provenance.get("code_analysis", {}).get("health") is False,

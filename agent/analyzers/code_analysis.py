@@ -46,8 +46,16 @@ class CodeAnalysisAnalyzer:
         self.dropped = 0
 
     def analyze(self, context: AnalyzerContext, collector: FactCollector) -> None:
-        documents = load_documents(getattr(context.config, "code_analysis_path", None))
+        directory = getattr(context.config, "code_analysis_path", None)
+        documents = load_documents(directory)
         if not documents:
+            # Анализ запускался, но ни один раздел не дал документа. Охват всё равно
+            # записывается: по нему потребитель отличает файл вне области анализа от
+            # файла без определений, и пустой охват такого различия не даёт. Каталог
+            # анализа отличает неуспех от прогона, в котором анализ не запускали.
+            if directory is not None and directory.is_dir():
+                collector.analysis_scope = describe_scope({}, context)
+                collector.analysis_scope["dropped_facts"] = 0
             return
         context.progress.stage("нормализация анализа кода")
         self.dropped = 0
@@ -604,6 +612,9 @@ def describe_scope(documents: dict[str, Any], context: AnalyzerContext) -> dict[
                 for name, section in sorted(details.items())
                 if isinstance(section, dict)
             }
+    # Состав разделов присутствует всегда: пустой перечень означает, что ни один
+    # раздел не выполнен, тогда как отсутствие ключа не отличить от неполного охвата.
+    scope.setdefault("sections", {})
     return scope
 
 

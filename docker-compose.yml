@@ -12,6 +12,8 @@ services:
       dockerfile: Dockerfile
       args:
         TLDR_VERSION: ${TLDR_VERSION:-0.4.0}
+        # Неизменяемый идентификатор сборки: тег переставляется, ревизия остаётся.
+        IMAGE_REVISION: ${IMAGE_REVISION:-неизвестна}
     image: ${IMAGE:-ghcr.io/united-software-platform/project-snapshot}:${IMAGE_TAG:-latest}
     # Файлы результата принадлежат хозяину каталога, а не root внутри контейнера.
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
@@ -22,5 +24,10 @@ services:
     environment:
       SCAN_PROJECT: /project
       SCAN_OUT: /out
+      # Координата образа и его digest: изнутри контейнера они недоступны,
+      # поэтому провенанс прогона получает их отсюда.
+      SCAN_IMAGE: ${IMAGE:-ghcr.io/united-software-platform/project-snapshot}
+      SCAN_IMAGE_TAG: ${IMAGE_TAG:-latest}
+      SCAN_IMAGE_DIGEST: ${IMAGE_DIGEST:-неизвестен}
       # Ключ нужен только для извлечения требований; без него агент собирает остальное.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

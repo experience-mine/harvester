@@ -25,9 +25,18 @@ RUN set -eux; \
 
 FROM python:3.12-slim
 
+# Неизменяемый идентификатор сборки. Версия агента задана константой в коде и от сборки
+# к сборке не меняется, тег образа переставляется на новую сборку — ни то, ни другое не
+# различает две сборки с одинаковой версией агента. Значение зашивается при сборке и
+# уезжает в манифест прогона, делая слепок привязанным к породившей его сборке.
+ARG IMAGE_REVISION=неизвестна
+
 LABEL org.opencontainers.image.title="project-snapshot" \
       org.opencontainers.image.description="Слепок проекта: сбор состояния репозитория и анализ кода tldr" \
-      org.opencontainers.image.licenses="MIT AND AGPL-3.0-only"
+      org.opencontainers.image.licenses="MIT AND AGPL-3.0-only" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}"
+
+ENV SCAN_IMAGE_REVISION=${IMAGE_REVISION}
 
 # git нужен анализатору истории; ca-certificates — для сетевых обращений агента.
 RUN set -eux; \
